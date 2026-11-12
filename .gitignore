@@ -1,0 +1,13 @@
+# Build output
+Debug/
+Release/
+
+# STM32CubeIDE settings (keep .cproject, .project, .mxproject for reproducibility)
+.settings/
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# IDE
+*.launch
