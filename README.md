@@ -1,316 +1,316 @@
 # STM32 Self-Balancing Robot
 
-Dwukołowy robot typu odwrócone wahadło na **STM32L476RG** z **FreeRTOS**. Utrzymuje pion kaskadą dwóch regulatorów: PI prędkości kół i PD kąta. Kąt pochylenia liczy z **MPU6050** filtrem komplementarnym. Polecenia jazdy i skrętu dostaje z aparatury RC przez odbiornik **ExpressLRS** po protokole **CRSF**. Protokół CRSF jest zaimplementowany od zera, bez gotowych bibliotek.
+A two-wheeled inverted-pendulum robot built on the **STM32L476RG** with **FreeRTOS**. It stays upright using a cascade of two controllers: a PI wheel-speed loop and a PD tilt-angle loop. Tilt angle is estimated from an **MPU6050** via a complementary filter. Drive and steering commands come from an RC transmitter through an **ExpressLRS** receiver over the **CRSF** protocol. The CRSF protocol is implemented from scratch, with no third-party libraries.
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Robot balansuje i jedzie sterowany z aparatury RC" width="480">
+  <img src="docs/demo.gif" alt="Robot balancing and driving under RC control" width="480">
 </p>
 
 ---
 
-## Spis treści
+## Table of Contents
 
-- [Najważniejsze cechy](#najważniejsze-cechy)
-- [Sprzęt](#sprzęt)
-- [Podłączenie (pinout)](#podłączenie-pinout)
-- [Architektura oprogramowania](#architektura-oprogramowania)
-- [Pętla regulacji](#pętla-regulacji)
-- [Estymacja kąta](#estymacja-kąta)
-- [Sterowanie silnikami](#sterowanie-silnikami)
-- [Odbiór CRSF z ExpressLRS](#odbiór-crsf-z-expresslrs)
-- [Bezpieczeństwo](#bezpieczeństwo)
-- [Struktura projektu](#struktura-projektu)
-- [Budowanie i wgrywanie](#budowanie-i-wgrywanie)
-- [Strojenie](#strojenie)
-
----
-
-## Najważniejsze cechy
-
-- **Pętla stabilizacji 1 kHz** w tasku FreeRTOS o wysokim priorytecie, z `vTaskDelayUntil`, więc bez dryfu okresu.
-- **Regulacja kaskadowa**: zewnętrzna pętla PI prędkości kół (100 Hz) zadaje kąt pochylenia wewnętrznej pętli PD kąta (1 kHz).
-- **Człon D liczony z żyroskopu**, a nie z różniczkowania uchybu, więc bez szpilek przy skokach wartości zadanej.
-- **Anti-windup** przez cofnięcie całkowania przy nasyceniu wyjścia.
-- **Własny parser CRSF**: synchronizacja na bajcie adresu, weryfikacja CRC-8 (DVB-S2) i rozpakowanie 16 kanałów po 11 bitów.
-- **UART z DMA w trybie Receive-to-Idle**: przerwanie przychodzi raz na ramkę, a nie na każdy bajt, a przetwarzanie odbywa się w tasku, nie w ISR.
-- **Failsafe**: brak danych z odbiornika przez 200 ms zeruje polecenia jazdy i skrętu.
-- **Wyłączenie silników** po przewróceniu robota (pochylenie powyżej 50°).
-- **Kalibracja zera żyroskopu** przy starcie (500 próbek).
+- [Key Features](#key-features)
+- [Hardware](#hardware)
+- [Wiring (Pinout)](#wiring-pinout)
+- [Software Architecture](#software-architecture)
+- [Control Loop](#control-loop)
+- [Angle Estimation](#angle-estimation)
+- [Motor Drive](#motor-drive)
+- [CRSF Reception from ExpressLRS](#crsf-reception-from-expresslrs)
+- [Safety](#safety)
+- [Project Structure](#project-structure)
+- [Building and Flashing](#building-and-flashing)
+- [Tuning](#tuning)
 
 ---
 
-## Sprzęt
+## Key Features
 
-| Element | Model | Rola |
+- **1 kHz stabilization loop** in a high-priority FreeRTOS task, using `vTaskDelayUntil` for zero period drift.
+- **Cascade control**: an outer PI wheel-speed loop (100 Hz) sets the tilt angle reference for an inner PD angle loop (1 kHz).
+- **D-term computed from the gyroscope**, not from error differentiation, so no spikes on setpoint changes.
+- **Anti-windup** via integration rollback when the output saturates.
+- **Custom CRSF parser**: sync on the address byte, CRC-8 (DVB-S2) verification, and unpacking of 16 × 11-bit channels.
+- **UART with DMA in Receive-to-Idle mode**: one interrupt per frame instead of per byte; processing runs in a task, not in the ISR.
+- **Failsafe**: no receiver data for 200 ms zeros out the drive and steering commands.
+- **Motor shutdown** when the robot tips over (tilt exceeds 50°).
+- **Gyroscope zero calibration** at startup (500 samples).
+
+---
+
+## Hardware
+
+| Component | Model | Role |
 |---|---|---|
-| Mikrokontroler | STM32L476RG (Nucleo-L476RG), Cortex-M4F, 80 MHz | logika, regulacja, FreeRTOS |
-| IMU | MPU6050 (I²C) | akcelerometr i żyroskop |
-| Sterowniki silników | 2× TI DRV8874 (tryb PH/EN) | mostki H dla silników DC |
-| Silniki | 2× DC z enkoderami kwadraturowymi | napęd i pomiar prędkości kół |
-| Odbiornik RC | ExpressLRS ER4 (wyjście CRSF) | odbiór poleceń z aparatury |
-| Aparatura | nadajnik z modułem ExpressLRS | sterowanie |
+| Microcontroller | STM32L476RG (Nucleo-L476RG), Cortex-M4F, 80 MHz | logic, control, FreeRTOS |
+| IMU | MPU6050 (I²C) | accelerometer and gyroscope |
+| Motor drivers | 2× TI DRV8874 (PH/EN mode) | H-bridges for DC motors |
+| Motors | 2× DC with quadrature encoders | drive and wheel speed measurement |
+| RC receiver | ExpressLRS ER4 (CRSF output) | receives commands from transmitter |
+| Transmitter | RC transmitter with ExpressLRS module | control |
 
 ---
 
-## Podłączenie (pinout)
+## Wiring (Pinout)
 
-| Sygnał | Pin STM32 | Peryferium | Uwagi |
+| Signal | STM32 Pin | Peripheral | Notes |
 |---|---|---|---|
-| PWM lewego silnika (EN) | PA0 | TIM2_CH1 | 20 kHz |
-| PWM prawego silnika (EN) | PA1 | TIM2_CH2 | 20 kHz |
-| Kierunek lewego silnika (PH) | PA8 | GPIO `LEFT_MOTOR_PH` | |
-| Kierunek prawego silnika (PH) | PC9 | GPIO `RIGHT_MOTOR_PH` | |
-| Enkoder lewy A/B | PA6 / PA7 | TIM3_CH1 / CH2 | tryb enkodera |
-| Enkoder prawy A/B | PB6 / PB7 | TIM4_CH1 / CH2 | tryb enkodera |
+| Left motor PWM (EN) | PA0 | TIM2_CH1 | 20 kHz |
+| Right motor PWM (EN) | PA1 | TIM2_CH2 | 20 kHz |
+| Left motor direction (PH) | PA8 | GPIO `LEFT_MOTOR_PH` | |
+| Right motor direction (PH) | PC9 | GPIO `RIGHT_MOTOR_PH` | |
+| Left encoder A/B | PA6 / PA7 | TIM3_CH1 / CH2 | encoder mode |
+| Right encoder A/B | PB6 / PB7 | TIM4_CH1 / CH2 | encoder mode |
 | MPU6050 SCL / SDA | PB8 / PB9 | I2C1 | Fast Mode, 400 kHz |
-| CRSF z odbiornika (TX odbiornika) | PA10 | USART1_RX | 420000 baud, DMA1 Ch5 |
-| CRSF do odbiornika (RX odbiornika) | PA9 | USART1_TX | nieużywane (brak telemetrii) |
-| Konsola debug | PA2 / PA3 | USART2 | 115200 baud, przez ST-LINK VCP |
+| CRSF from receiver (RX TX pin) | PA10 | USART1_RX | 420000 baud, DMA1 Ch5 |
+| CRSF to receiver (RX RX pin) | PA9 | USART1_TX | unused (no telemetry) |
+| Debug console | PA2 / PA3 | USART2 | 115200 baud, via ST-LINK VCP |
 
 ---
 
-## Architektura oprogramowania
+## Software Architecture
 
-System działa na **FreeRTOS** (CMSIS-RTOS v2) z dwoma taskami aplikacji:
+The system runs on **FreeRTOS** (CMSIS-RTOS v2) with two application tasks:
 
 ```mermaid
 flowchart LR
     RX[ExpressLRS ER4] -- CRSF 420 kbaud --> UART[USART1 + DMA<br/>Receive-to-Idle]
     UART -- IDLE IRQ --> ISR[HAL_UARTEx_RxEventCallback]
-    ISR -- xTaskNotifyFromISR<br/>rozmiar ramki --> COMM[vCommunicationTask<br/>priorytet niski]
-    COMM -- dekodowanie CRSF<br/>martwa strefa, skalowanie --> Q[(rcQueue<br/>długość 1)]
-    Q -- xQueueReceive --> CTRL[vControlTask<br/>priorytet wysoki, 1 kHz]
+    ISR -- xTaskNotifyFromISR<br/>frame size --> COMM[vCommunicationTask<br/>low priority]
+    COMM -- CRSF decode<br/>deadzone, scaling --> Q[(rcQueue<br/>depth 1)]
+    Q -- xQueueReceive --> CTRL[vControlTask<br/>high priority, 1 kHz]
     IMU[MPU6050] -- I2C --> CTRL
-    ENC[Enkodery<br/>TIM3 / TIM4] --> CTRL
+    ENC[Encoders<br/>TIM3 / TIM4] --> CTRL
     CTRL -- PWM + PH --> DRV[DRV8874 ×2]
 ```
 
-| Task | Priorytet | Okres | Zadanie |
+| Task | Priority | Period | Responsibility |
 |---|---|---|---|
-| `vControlTask` | `osPriorityHigh` | 1 ms | odczyt IMU, filtr, kaskada PID, sterowanie silnikami |
-| `vCommunicationTask` | `osPriorityLow` | zdarzeniowo (ramka CRSF) lub co 200 ms | odbiór i dekodowanie CRSF, wysyłka poleceń do kolejki |
+| `vControlTask` | `osPriorityHigh` | 1 ms | IMU read, filter, PID cascade, motor drive |
+| `vCommunicationTask` | `osPriorityLow` | event-driven (CRSF frame) or every 200 ms | CRSF reception and decoding, command forwarding to queue |
 
-### Komunikacja między taskami
+### Inter-Task Communication
 
-- **ISR → task komunikacji**: *direct-to-task notification* (`xTaskNotifyFromISR` z `eSetValueWithOverwrite`). Wartością powiadomienia jest liczba odebranych bajtów, więc nie trzeba osobnej kolejki ani semafora.
-- **Task komunikacji → task regulacji**: kolejka `rcQueue` o **długości 1**, zapisywana przez `xQueueOverwrite`. W kolejce zawsze leży tylko najświeższe polecenie (`RC_Command_t { speed, turn }`). Regulator nigdy nie dostaje zaległych, starych wychyleń drążków.
+- **ISR → communication task**: *direct-to-task notification* (`xTaskNotifyFromISR` with `eSetValueWithOverwrite`). The notification value carries the number of bytes received, so no separate queue or semaphore is needed.
+- **Communication task → control task**: a queue `rcQueue` of **depth 1**, written via `xQueueOverwrite`. The queue always holds only the most recent command (`RC_Command_t { speed, turn }`). The controller never gets stale, outdated stick positions.
 
 ---
 
-## Pętla regulacji
+## Control Loop
 
-Robot jest odwróconym wahadłem: żeby stał, koła muszą stale „podjeżdżać” pod środek masy. Regulacja jest **kaskadowa**:
+The robot is an inverted pendulum: to stay upright the wheels must constantly "drive under" the center of mass. The control is **cascaded**:
 
 ```mermaid
 flowchart LR
-    SP[speed_setpoint<br/>z aparatury] --> PS[PI prędkości<br/>100 Hz]
-    WS[prędkość kół<br/>z enkoderów, filtr DP] --> PS
-    PS -- kąt zadany<br/>±5° --> PA[PID kąta<br/>1 kHz]
-    ANG[kąt z filtru<br/>komplementarnego] --> PA
-    GYR[prędkość kątowa<br/>z żyroskopu] -- człon D --> PA
-    PA -- wypełnienie ±100% --> MIX[mikser skrętu]
-    TURN[turn z aparatury] --> MIX
-    MIX --> L[lewy silnik]
-    MIX --> R[prawy silnik]
+    SP[speed_setpoint<br/>from transmitter] --> PS[PI speed<br/>100 Hz]
+    WS[wheel speed<br/>from encoders, LP filter] --> PS
+    PS -- angle setpoint<br/>±5° --> PA[PID angle<br/>1 kHz]
+    ANG[angle from<br/>complementary filter] --> PA
+    GYR[angular rate<br/>from gyroscope] -- D-term --> PA
+    PA -- duty cycle ±100% --> MIX[turn mixer]
+    TURN[turn from transmitter] --> MIX
+    MIX --> L[left motor]
+    MIX --> R[right motor]
 ```
 
-### Pętla wewnętrzna: kąt (1 kHz)
+### Inner Loop: Angle (1 kHz)
 
-| Parametr | Wartość |
+| Parameter | Value |
 |---|---|
 | `kp` | 10 |
 | `kd` | 0.45 |
 | `ki` | 0 |
 | `dt` | 1 ms |
-| nasycenie | ±100 (% wypełnienia PWM) |
+| saturation | ±100 (% PWM duty) |
 
-Człon różniczkujący nie różniczkuje uchybu, tylko bierze prędkość kątową prosto z żyroskopu:
-
-```
-u = kp · (θ_zad − θ) − kd · ω_gyro + ki · ∫e dt
-```
-
-Daje to czysty sygnał D bez szumu numerycznego różniczkowania i bez szarpnięć przy zmianie kąta zadanego przez pętlę prędkości.
-
-### Pętla zewnętrzna: prędkość (100 Hz)
-
-Co 10 iteracji pętli kąta, czyli co 10 ms:
-
-1. Odczyt liczników enkoderów (TIM3, TIM4), różnica względem poprzedniego odczytu. Liczniki są 16-bitowe, a różnica liczona na `int16_t`, więc przepełnienie licznika obsługuje się samo.
-2. Średnia prędkość obu kół, filtr dolnoprzepustowy pierwszego rzędu (`α = 0.3`).
-3. Regulator PI prędkości (`kp = 1.5`, `ki = 0.1`) liczy **kąt zadany** dla pętli wewnętrznej, nasycony do **±5°**. Członu D tu nie ma: wymagałby różniczkowania zaszumionych impulsów enkodera, a tłumienie i tak zapewnia pętla kąta.
-
-Żeby pojechać do przodu, robot musi się najpierw pochylić do przodu. Pętla prędkości robi dokładnie to: zamiast bezpośrednio kręcić kołami, przechyla robota, a pętla kąta sama za tym pochyleniem „podjeżdża”. Ta sama pętla przy zerowym poleceniu likwiduje powolne odjeżdżanie robota, które zostałoby przy samej regulacji kąta.
-
-### Anti-windup
-
-Gdy wyjście regulatora wchodzi w nasycenie, ostatni przyrost całki jest cofany (*conditional integration*). Całka nie rośnie w nieskończoność, kiedy siłowniki i tak dają już maksimum.
-
-### Mikser skrętu
+The derivative term does not differentiate the error; instead it takes the angular rate straight from the gyroscope:
 
 ```
-lewy  = u − turn
-prawy = u + turn
+u = kp · (θ_ref − θ) − kd · ω_gyro + ki · ∫e dt
 ```
 
-Jeśli dodanie skrętu wypchnęłoby któreś koło poza ±100%, skręt jest pomijany. **Priorytet ma utrzymanie pionu**, a nie wykonanie skrętu.
+This gives a clean D signal with no numerical differentiation noise and no jerks when the angle setpoint changes from the speed loop.
+
+### Outer Loop: Speed (100 Hz)
+
+Every 10 iterations of the angle loop, i.e. every 10 ms:
+
+1. Read encoder counters (TIM3, TIM4) and compute the difference from the previous reading. The counters are 16-bit and the difference is computed on `int16_t`, so counter overflow is handled automatically.
+2. Average speed of both wheels, first-order low-pass filter (`α = 0.3`).
+3. PI speed controller (`kp = 1.5`, `ki = 0.1`) computes the **angle setpoint** for the inner loop, clamped to **±5°**. There is no D-term here: it would require differentiating noisy encoder pulses, and damping is already provided by the angle loop.
+
+To drive forward the robot must first lean forward. The speed loop does exactly that: instead of spinning the wheels directly, it tilts the robot, and the angle loop "catches up" with the tilt. The same loop, when commanded zero speed, corrects the slow drift that would remain with angle control alone.
+
+### Anti-Windup
+
+When the controller output saturates, the last integrator increment is rolled back (*conditional integration*). The integral does not grow unbounded while the actuators are already at their limit.
+
+### Turn Mixer
+
+```
+left  = u − turn
+right = u + turn
+```
+
+If adding the turn command would push either motor beyond ±100%, the turn is ignored. **Staying upright takes priority** over executing a turn.
 
 ---
 
-## Estymacja kąta
+## Angle Estimation
 
-Kąt pochylenia (oś Y) z **filtru komplementarnego**:
+Tilt angle (Y-axis) from a **complementary filter**:
 
 ```
 θ_acc = atan2(a_x, √(a_y² + a_z²))
 θ     = α · (θ_prev − ω_y · dt) + (1 − α) · θ_acc
 ```
 
-| Parametr | Wartość | Znaczenie |
+| Parameter | Value | Meaning |
 |---|---|---|
-| `α` | 0.998 | zaufanie do żyroskopu |
-| `dt` | 1 ms | okres pętli |
-| stała czasowa | ≈ 0.5 s | `τ = α·dt / (1 − α)` |
+| `α` | 0.998 | trust in the gyroscope |
+| `dt` | 1 ms | loop period |
+| time constant | ≈ 0.5 s | `τ = α·dt / (1 − α)` |
 
-- **Żyroskop** dobrze śledzi szybkie zmiany, ale całkowany dryfuje.
-- **Akcelerometr** daje absolutny kąt względem grawitacji, ale jest zaszumiony i zakłócany przyspieszeniami robota.
+- The **gyroscope** tracks fast changes well but drifts when integrated.
+- The **accelerometer** gives an absolute angle relative to gravity but is noisy and disturbed by the robot's accelerations.
 
-Filtr bierze z żyroskopu wysokie częstotliwości, a z akcelerometru tylko składową wolnozmienną, która koryguje dryf.
+The filter takes the high frequencies from the gyroscope and only the slow-varying component from the accelerometer, which corrects the drift.
 
-### Konfiguracja MPU6050
+### MPU6050 Configuration
 
-| Rejestr | Ustawienie |
+| Register | Setting |
 |---|---|
-| zakres akcelerometru | ±2 g (16384 LSB/g) |
-| zakres żyroskopu | ±500 °/s (65.5 LSB/(°/s)) |
-| DLPF (`CONFIG`) | 3, ok. 44 Hz |
-| odczyt | 14 bajtów jednym transferem I²C od `0x3B` |
+| accelerometer range | ±2 g (16384 LSB/g) |
+| gyroscope range | ±500 °/s (65.5 LSB/(°/s)) |
+| DLPF (`CONFIG`) | 3, approx. 44 Hz |
+| read | 14 bytes in a single I²C transfer from `0x3B` |
 
-Przy starcie liczone jest **zero żyroskopu** ze średniej z 500 próbek. **Robot musi wtedy stać nieruchomo.**
+At startup, the **gyroscope zero offset** is computed as the average of 500 samples. **The robot must remain stationary during this time.**
 
 ---
 
-## Sterowanie silnikami
+## Motor Drive
 
-Sterownik **DRV8874** pracuje w trybie **PH/EN**:
+The **DRV8874** driver operates in **PH/EN mode**:
 
-- **EN** to PWM z TIM2: 80 MHz / 4000 = **20 kHz**, poza zakresem słyszalnym.
-- **PH** to pin GPIO z kierunkiem obrotu.
+- **EN** is the PWM output from TIM2: 80 MHz / 4000 = **20 kHz**, above the audible range.
+- **PH** is a GPIO pin that sets the direction of rotation.
 
-Wejście `DRV8874_set_*_speed()` to wypełnienie w procentach, od −100 do +100. Przed wysłaniem na PWM wartość przechodzi przez:
+The input to `DRV8874_set_*_speed()` is a duty cycle in percent, from −100 to +100. Before being sent to the PWM, the value passes through:
 
-| Zakres wejścia | Wynik | Po co |
+| Input range | Result | Purpose |
 |---|---|---|
-| \|u\| < 2 | 0 | martwa strefa, bez brzęczenia silników w pionie |
-| 2 ≤ \|u\| < 5 | ±5 | kompensacja tarcia statycznego, bo silnik ruszy dopiero od pewnego progu |
-| \|u\| > 100 | ±100 | nasycenie |
+| \|u\| < 2 | 0 | deadzone, prevents motor buzzing while standing |
+| 2 ≤ \|u\| < 5 | ±5 | static friction compensation, motor won't spin below a certain threshold |
+| \|u\| > 100 | ±100 | saturation |
 
 ---
 
-## Odbiór CRSF z ExpressLRS
+## CRSF Reception from ExpressLRS
 
-### Warstwa fizyczna
+### Physical Layer
 
 - **USART1, 420000 baud, 8N1**, pin PA10.
-- **DMA w trybie Receive-to-Idle** (`HAL_UARTEx_ReceiveToIdle_DMA`). Bajty trafiają do bufora bez udziału CPU, a przerwanie przychodzi dopiero, gdy linia przestaje nadawać, czyli po całej ramce.
+- **DMA in Receive-to-Idle mode** (`HAL_UARTEx_ReceiveToIdle_DMA`). Bytes are transferred to the buffer without CPU involvement; an interrupt fires only when the line goes idle, i.e. after a complete frame.
 
-### Format ramki RC (`RC_CHANNELS_PACKED`)
+### RC Frame Format (`RC_CHANNELS_PACKED`)
 
-| Bajt | Zawartość |
+| Byte | Content |
 |---|---|
-| 0 | adres: `0xC8` (flight controller) |
-| 1 | długość: `24` (typ + payload + CRC) |
-| 2 | typ: `0x16` (RC channels packed) |
-| 3–24 | 16 kanałów × 11 bitów = 22 bajty, little-endian |
+| 0 | address: `0xC8` (flight controller) |
+| 1 | length: `24` (type + payload + CRC) |
+| 2 | type: `0x16` (RC channels packed) |
+| 3–24 | 16 channels × 11 bits = 22 bytes, little-endian |
 | 25 | CRC-8 |
 
-### Dekodowanie (`crsf.c`)
+### Decoding (`crsf.c`)
 
-1. **Synchronizacja**: przeszukanie bufora w poszukiwaniu `0xC8`, długości `24` i typu `0x16`. Bufor DMA nie zawsze zaczyna się na początku ramki.
-2. **CRC-8 DVB-S2** (wielomian `0xD5`, tablica 256 elementów) liczony z bajtów od typu do końca payloadu i porównywany z ostatnim bajtem ramki.
-3. **Rozpakowanie kanałów**: dla kanału `i` przesunięcie bitowe to `i · 11`. Z payloadu czytane są 4 bajty jako słowo 32-bitowe, przesunięte o `bit_offset % 8` i zamaskowane `0x7FF`.
+1. **Synchronization**: scan the buffer for `0xC8`, length `24`, and type `0x16`. The DMA buffer does not always start at the beginning of a frame.
+2. **CRC-8 DVB-S2** (polynomial `0xD5`, 256-entry lookup table) computed over the bytes from the type field through the end of the payload and compared to the last byte of the frame.
+3. **Channel unpacking**: for channel `i`, the bit offset is `i · 11`. Four bytes are read from the payload as a 32-bit word, shifted by `bit_offset % 8`, and masked with `0x7FF`.
 
-### Mapowanie na polecenia
+### Mapping to Commands
 
-Wartości kanałów CRSF: **172** (min), **992** (środek), **1811** (max).
+CRSF channel values: **172** (min), **992** (center), **1811** (max).
 
-| Kanał | Polecenie | Zakres po skalowaniu |
+| Channel | Command | Scaled range |
 |---|---|---|
-| CH1 | `turn` (skręt) | ±30 |
-| CH2 | `speed_setpoint` (jazda) | ±5 (impulsy enkodera / 10 ms) |
+| CH1 | `turn` (steering) | ±30 |
+| CH2 | `speed_setpoint` (drive) | ±5 (encoder pulses / 10 ms) |
 
 ```
-wartość = (kanał − 992) · MAX / 819     # martwa strefa ±8 wokół środka
+value = (channel − 992) · MAX / 819     # deadzone ±8 around center
 ```
 
 ---
 
-## Bezpieczeństwo
+## Safety
 
-| Sytuacja | Reakcja |
+| Condition | Response |
 |---|---|
-| Brak danych z odbiornika przez 200 ms | `speed = 0`, `turn = 0`: robot stoi w miejscu i dalej balansuje |
-| Uszkodzona ramka (zły CRC) | ignorowana, ostatnie poprawne polecenie zostaje |
-| Pochylenie > 50° (przewrócenie) | silniki wyłączone na stałe, do resetu |
-| Błąd odczytu IMU | pętla korzysta z ostatniego poprawnego kąta |
+| No receiver data for 200 ms | `speed = 0`, `turn = 0`: robot stands in place and keeps balancing |
+| Corrupted frame (bad CRC) | ignored, last valid command is kept |
+| Tilt > 50° (tip-over) | motors disabled permanently until reset |
+| IMU read error | loop uses the last valid angle |
 
-Failsafe działa przez timeout `xTaskNotifyWait`: jeśli przez 200 ms nie przyjdzie żadne powiadomienie z przerwania UART, task komunikacji sam wpisuje do kolejki zera.
+Failsafe works via the `xTaskNotifyWait` timeout: if no UART interrupt notification arrives within 200 ms, the communication task writes zeros to the queue on its own.
 
 ---
 
-## Struktura projektu
+## Project Structure
 
 ```
 Core/
 ├── Inc/
-│   ├── communication_task.h   # task CRSF, deklaracja rcQueue
-│   ├── control_task.h         # task regulacji
-│   ├── crsf.h                 # typy kanałów RC, dekoder
-│   ├── DRV8874.h              # sterownik silników
-│   ├── filters.h              # filtr komplementarny
+│   ├── communication_task.h   # CRSF task, rcQueue declaration
+│   ├── control_task.h         # control task
+│   ├── crsf.h                 # RC channel types, decoder
+│   ├── DRV8874.h              # motor driver
+│   ├── filters.h              # complementary filter
 │   ├── mpu6050.h              # IMU
-│   ├── pid.h                  # regulator PID
-│   ├── RC_Command.h           # struktura polecenia { speed, turn }
+│   ├── pid.h                  # PID controller
+│   ├── RC_Command.h           # command struct { speed, turn }
 │   └── FreeRTOSConfig.h
 └── Src/
-    ├── main.c                 # init peryferiów, tworzenie tasków i kolejki
-    ├── control_task.c         # pętla 1 kHz: IMU, kaskada PID, silniki
-    ├── communication_task.c   # odbiór UART/DMA, failsafe, skalowanie
-    ├── crsf.c                 # synchronizacja, CRC-8, rozpakowanie kanałów
-    ├── DRV8874.c              # PWM + PH, martwa strefa, nasycenie
-    ├── mpu6050.c              # init, kalibracja żyroskopu, odczyt I²C
-    ├── filters.c              # filtr komplementarny
-    └── pid.c                  # PID z D z pomiaru i anti-windupem
+    ├── main.c                 # peripheral init, task and queue creation
+    ├── control_task.c         # 1 kHz loop: IMU, PID cascade, motors
+    ├── communication_task.c   # UART/DMA reception, failsafe, scaling
+    ├── crsf.c                 # sync, CRC-8, channel unpacking
+    ├── DRV8874.c              # PWM + PH, deadzone, saturation
+    ├── mpu6050.c              # init, gyroscope calibration, I²C read
+    ├── filters.c              # complementary filter
+    └── pid.c                  # PID with D-from-measurement and anti-windup
 ```
 
-Konfiguracja peryferiów i FreeRTOS jest w `robocik.ioc` (STM32CubeMX).
+Peripheral and FreeRTOS configuration is in `robocik.ioc` (STM32CubeMX).
 
 ---
 
-## Budowanie i wgrywanie
+## Building and Flashing
 
-**Wymagania:** STM32CubeIDE 1.16+ i płytka Nucleo-L476RG (lub STM32L476RG z ST-LINK).
+**Requirements:** STM32CubeIDE 1.16+ and a Nucleo-L476RG board (or an STM32L476RG with ST-LINK).
 
-1. `File → Import → Existing Projects into Workspace` i wybierz katalog repozytorium.
+1. `File → Import → Existing Projects into Workspace` and select the repository directory.
 2. `Project → Build Project`.
-3. `Run → Debug` wgrywa przez ST-LINK.
-4. Konsola debug: port COM ST-LINK, **115200 baud**.
+3. `Run → Debug` flashes via ST-LINK.
+4. Debug console: ST-LINK COM port, **115200 baud**.
 
-**Przy starcie** robot musi stać nieruchomo (najlepiej podparty w pionie) przez około 2 sekundy, bo trwa wtedy kalibracja żyroskopu.
+**At startup** the robot must remain stationary (ideally propped upright) for about 2 seconds while the gyroscope calibration runs.
 
-### Ustawienia odbiornika ExpressLRS
+### ExpressLRS Receiver Settings
 
-- Protokół wyjściowy: **CRSF**.
-- Baud odbiornika: **420000** (domyślne dla ELRS).
-- Aparatura w trybie kanałów **AETR**.
+- Output protocol: **CRSF**.
+- Receiver baud rate: **420000** (ELRS default).
+- Transmitter channel order: **AETR**.
 
 ---
 
-## Strojenie
+## Tuning
 
-Kolejność, która sprawdza się przy balancerach:
+Recommended order for balancing robots:
 
-1. **Tylko pętla kąta** (pętla prędkości wyłączona, `angle_setpoint = 0`): zwiększaj `kp`, aż robot zacznie oscylować, potem dodawaj `kd`, aż oscylacje znikną.
-2. **Pętla prędkości**: zacznij od małego `kp`, aż robot przestanie odjeżdżać. `ki` likwiduje powolny dryf w jedną stronę.
-3. **Nasycenie kąta zadanego (±5°)** ogranicza, jak mocno pętla prędkości może przechylić robota, czyli w praktyce maksymalne przyspieszenie.
-4. **`MAX_SPEED` i `MAX_TURN`** w `communication_task.c` ustawiają czułość drążków.
+1. **Angle loop only** (speed loop disabled, `angle_setpoint = 0`): increase `kp` until the robot starts oscillating, then increase `kd` until the oscillations disappear.
+2. **Speed loop**: start with a small `kp` until the robot stops drifting away. `ki` eliminates slow drift in one direction.
+3. **Angle setpoint saturation (±5°)** limits how much the speed loop can tilt the robot, effectively capping the maximum acceleration.
+4. **`MAX_SPEED` and `MAX_TURN`** in `communication_task.c` set the stick sensitivity.
