@@ -3,7 +3,7 @@
 A two-wheeled inverted-pendulum robot built on the **STM32L476RG** with **FreeRTOS**. It stays upright using a cascade of two controllers: a PI wheel-speed loop and a PD tilt-angle loop. Tilt angle is estimated from an **MPU6050** via a complementary filter. Drive and steering commands come from an RC transmitter through an **ExpressLRS** receiver over the **CRSF** protocol. The CRSF protocol is implemented from scratch, with no third-party libraries.
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Robot balancing and driving under RC control" width="480">
+  <img src="demo.gif" alt="Robot balancing and driving under RC control" width="480">
 </p>
 
 ---
