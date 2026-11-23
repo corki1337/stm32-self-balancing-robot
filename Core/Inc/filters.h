@@ -1,7 +1,7 @@
 #pragma once
 
-#include "mpu6050.h"
+#include "imu_data.h"
 
 
 
-float ComplementaryFilter(const MPU6050_t *data, float dt);
+float ComplementaryFilter(const IMU_t *data, float dt);
