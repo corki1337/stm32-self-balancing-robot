@@ -112,11 +112,11 @@ void vControlTask(void *pvParameters){
 		float pid_output = pid_regulator(&pid1, angle_setpoint, current_angle, angle_rate);
 
 		if(fabsf(pid_output) + fabsf(turn) > 100){
-			DRV8874_set_left_speed(pid_output);
-			DRV8874_set_right_speed(pid_output);
+			DRV8874_set_speed(MOTOR_LEFT, pid_output);
+			DRV8874_set_speed(MOTOR_RIGHT, pid_output);
 		}else{
-			DRV8874_set_left_speed(pid_output-turn);
-			DRV8874_set_right_speed(pid_output+turn);
+			DRV8874_set_speed(MOTOR_LEFT, pid_output-turn);
+			DRV8874_set_speed(MOTOR_RIGHT, pid_output+turn);
 		}
 		//printf("pid out: %d\n", pid_output);
 
