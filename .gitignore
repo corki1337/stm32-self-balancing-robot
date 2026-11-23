@@ -1,6 +1,7 @@
 # Build output
 Debug/
 Release/
+build/
 
 # STM32CubeIDE settings (keep .cproject, .project, .mxproject for reproducibility)
 .settings/
@@ -12,3 +13,5 @@ Thumbs.db
 # IDE
 *.launch
 
+#vscode
+.vscode
