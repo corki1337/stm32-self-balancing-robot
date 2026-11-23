@@ -1,6 +1,5 @@
 #include "control_task.h"
 #include <stdint.h>
-#include "tim.h"
 #include "mpu6050.h"
 #include "filters.h"
 #include "DRV8874.h"
@@ -9,12 +8,11 @@
 #include "RC_Command.h"
 #include "queue.h"
 #include <math.h>
-
+#include "imu_data.h"
+#include "encoder.h"
 
 extern QueueHandle_t rcQueue;
 
-extern TIM_HandleTypeDef htim3;
-extern TIM_HandleTypeDef htim4;
 
 void vControlTask(void *pvParameters){
 
@@ -51,11 +49,10 @@ void vControlTask(void *pvParameters){
 	float speed_setpoint = 0.f;
 	float turn = 0.f;
 	float current_angle = 0.f;
-	MPU6050_t scaled_data = {0};
+	IMU_t scaled_data = {0};
 	RC_Command_t command = {0};
 
-	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
-	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
+	encoder_start();
 
 	DRV8874_init();
 
@@ -70,7 +67,7 @@ void vControlTask(void *pvParameters){
 
 
 
-		MPU6050_Raw_t raw_mpu_data;
+		IMU_Raw_t raw_mpu_data;
 
 
 
@@ -79,7 +76,7 @@ void vControlTask(void *pvParameters){
 		speed_setpoint = command.speed;
 		turn = command.turn;
 
-		if(mpu6050_read_all(&raw_mpu_data) == HAL_OK){
+		if(mpu6050_read_all(&raw_mpu_data)){
 			mpu6050_convert(&raw_mpu_data, &scaled_data);
 			current_angle = ComplementaryFilter(&scaled_data, 0.001);
 			//printf("Current angle: %f\n", current_angle);
@@ -93,8 +90,8 @@ void vControlTask(void *pvParameters){
 
 		if(++speed_loop_cnt >= 10){
 			speed_loop_cnt = 0;
-            int16_t current_left  =  __HAL_TIM_GET_COUNTER(&htim3);
-            int16_t current_right = -__HAL_TIM_GET_COUNTER(&htim4);
+            int16_t current_left  = encoder_read_left();
+            int16_t current_right = encoder_read_right();
 
             int16_t d_left  = current_left  - left_encoder_last_pos;
             int16_t d_right = current_right - right_encoder_last_pos;

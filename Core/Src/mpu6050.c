@@ -44,12 +44,12 @@ void mpu6050_init(void){
 	 HAL_Delay(100);
 
 	 //gyro calibration
-	 MPU6050_Raw_t raw;
+	 IMU_Raw_t raw;
 	 float sum_x = 0.f, sum_y = 0.f, sum_z = 0.f;
 	 int n = 0;
 
    	 for (int i = 0; i < GYRO_CALIB_SAMPLES; i++) {
-   		 if (mpu6050_read_all(&raw) == HAL_OK) {
+   		 if (mpu6050_read_all(&raw)) {
    			 sum_x += raw.gyro_x / 65.5f;
    			 sum_y += raw.gyro_y / 65.5f;
    			 sum_z += raw.gyro_z / 65.5f;
@@ -66,12 +66,12 @@ void mpu6050_init(void){
 
 }
 
-HAL_StatusTypeDef mpu6050_read_all(MPU6050_Raw_t *data){
+bool mpu6050_read_all(IMU_Raw_t *data){
 
 	uint8_t buf[14];
 
 	if(HAL_I2C_Mem_Read(&hi2c1, (MPU6050_I2C_ADDR<<1), MPU6050_FIRST_ACC_BIT, I2C_MEMADD_SIZE_8BIT, buf, 14, 100) != HAL_OK){
-		return HAL_ERROR;
+		return false;
 	}
 
 	data->accel_x = (int16_t)((buf[0]<<8) | buf[1]);
@@ -83,11 +83,11 @@ HAL_StatusTypeDef mpu6050_read_all(MPU6050_Raw_t *data){
 	data->gyro_z = (int16_t)((buf[12]<<8) | buf[13]);
 
 
-	return HAL_OK;
+	return true;
 }
 
 
-void mpu6050_convert(const MPU6050_Raw_t *raw_data, MPU6050_t *data){
+void mpu6050_convert(const IMU_Raw_t *raw_data, IMU_t *data){
 
 	data->accel_x = (float)raw_data->accel_x / 16384.0f;
 	data->accel_y = (float)raw_data->accel_y / 16384.0f;
