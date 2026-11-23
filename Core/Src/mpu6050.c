@@ -1,6 +1,11 @@
 #include "mpu6050.h"
 #include "i2c.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+
+
+
 #define MPU6050_I2C_ADDR         0x68
 #define MPU6050_PWR_MGMT_1 		 0x6B
 #define MPU6050_GYRO_CONFIG		 0x1B
@@ -55,7 +60,7 @@ void mpu6050_init(void){
    			 sum_z += raw.gyro_z / 65.5f;
    			 n++;
    		  }
-   	  HAL_Delay(2);
+   	  vTaskDelay(pdMS_TO_TICKS(2));
    	  }
 
    	 if (n > 0) {

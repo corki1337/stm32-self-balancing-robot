@@ -1,7 +1,7 @@
 #include "crsf.h"
 
 
-unsigned char crc8tab[256] = {
+static const uint8_t crc8tab[256] = {
     0x00, 0xD5, 0x7F, 0xAA, 0xFE, 0x2B, 0x81, 0x54, 0x29, 0xFC, 0x56, 0x83, 0xD7, 0x02, 0xA8, 0x7D,
     0x52, 0x87, 0x2D, 0xF8, 0xAC, 0x79, 0xD3, 0x06, 0x7B, 0xAE, 0x04, 0xD1, 0x85, 0x50, 0xFA, 0x2F,
     0xA4, 0x71, 0xDB, 0x0E, 0x5A, 0x8F, 0x25, 0xF0, 0x8D, 0x58, 0xF2, 0x27, 0x73, 0xA6, 0x0C, 0xD9,
@@ -54,7 +54,6 @@ bool decode_rc_frame(const uint8_t *frame, uint8_t len, RC_Channels_t *Channels)
 
 	const uint8_t *payload = framestart + 3;
 
-	uint16_t temp_ch[16];
 
 	for(int i = 0; i < 16; i++){
 		int bit_offset = i * 11;
@@ -66,27 +65,8 @@ bool decode_rc_frame(const uint8_t *frame, uint8_t len, RC_Channels_t *Channels)
                 ((uint32_t)payload[starting_byte + 1] << 8)  |
                 (uint32_t)payload[starting_byte];
 
-		temp_ch[i] = (uint16_t)((chunk >> starting_bit) & 0x7FF);
+		Channels->ch[i] = (uint16_t)((chunk >> starting_bit) & 0x7FF);
 	}
-
-	Channels->channel_01 = temp_ch[0];
-	Channels->channel_02 = temp_ch[1];
-	Channels->channel_03 = temp_ch[2];
-	Channels->channel_04 = temp_ch[3];
-	Channels->channel_05 = temp_ch[4];
-	Channels->channel_06 = temp_ch[5];
-	Channels->channel_07 = temp_ch[6];
-	Channels->channel_08 = temp_ch[7];
-	Channels->channel_09 = temp_ch[8];
-	Channels->channel_10 = temp_ch[9];
-	Channels->channel_11 = temp_ch[10];
-	Channels->channel_12 = temp_ch[11];
-	Channels->channel_13 = temp_ch[12];
-	Channels->channel_14 = temp_ch[13];
-	Channels->channel_15 = temp_ch[14];
-	Channels->channel_16 = temp_ch[15];
-
-
 
 	return true;
 }

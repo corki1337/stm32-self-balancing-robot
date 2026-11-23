@@ -3,23 +3,14 @@
 #include <stdint.h>
 
 
+
+#define CRSF_CHANNEL_MIN        172
+#define CRSF_CHANNEL_MID        992
+#define CRSF_CHANNEL_MAX        1811
+#define CRSF_CHANNEL_HALF_RANGE 819.f
+
 typedef struct{
-	uint16_t channel_01;
-	uint16_t channel_02;
-	uint16_t channel_03;
-	uint16_t channel_04;
-	uint16_t channel_05;
-	uint16_t channel_06;
-	uint16_t channel_07;
-	uint16_t channel_08;
-	uint16_t channel_09;
-	uint16_t channel_10;
-	uint16_t channel_11;
-	uint16_t channel_12;
-	uint16_t channel_13;
-	uint16_t channel_14;
-	uint16_t channel_15;
-	uint16_t channel_16;
+	uint16_t ch[16];
 }RC_Channels_t;
 
 
