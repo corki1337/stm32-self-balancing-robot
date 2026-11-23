@@ -34,7 +34,7 @@ void DRV8874_set_left_speed(float speed){
 	else if(speed > -5.f && speed <= -2.f) speed = -5.f;
 	if (speed < -100.f) speed = -100.f;
 
-	if(speed > 100){
+	if(speed >= 100){
 		HAL_GPIO_WritePin(LEFT_MOTOR_PH_GPIO_Port, LEFT_MOTOR_PH_Pin, 1);
 		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 3999);
 	}else if(speed > 0){

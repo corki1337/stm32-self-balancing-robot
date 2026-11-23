@@ -12,7 +12,16 @@
 static uint8_t buffer[64] = {0};
 static TaskHandle_t xTaskToNotify = NULL;
 
+static float scale_channel(uint16_t raw, float max_out){
+	int32_t delta = (int32_t)raw - CRSF_CHANNEL_MID;
+	if(delta > -DEAD_ZONE && delta < DEAD_ZONE) return 0.f;
+	return (float)delta * (max_out / CRSF_CHANNEL_HALF_RANGE);
+}
 
+static void start_rx(void){
+	HAL_UARTEx_ReceiveToIdle_DMA(&huart1, buffer, sizeof(buffer));
+	__HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+}
 
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size){
@@ -41,7 +50,7 @@ void vCommunicationTask(void *pvParameters){
 	__HAL_UART_CLEAR_FEFLAG(&huart1);
 	__HAL_UART_CLEAR_IDLEFLAG(&huart1);
 
-	HAL_UARTEx_ReceiveToIdle_DMA(&huart1, buffer, 64);
+	start_rx();
 
 	for(;;){
 		uint32_t curr_size = 0;
@@ -54,11 +63,8 @@ void vCommunicationTask(void *pvParameters){
 			if(decode_rc_frame(buffer, curr_size, &channels)){
 
 
-				float turn = (channels.channel_01 < 992 + DEAD_ZONE && channels.channel_01 > 992 - DEAD_ZONE) ? 0 : (float)(channels.channel_01 - 992) * (MAX_TURN/819.f);
-				float speed = (channels.channel_02 < 992 + DEAD_ZONE && channels.channel_02 > 992 - DEAD_ZONE) ? 0 : (float)(channels.channel_02 - 992) * (MAX_SPEED/819.f);
-
-				command.speed = speed;
-				command.turn = turn;
+				command.turn  = scale_channel(channels.ch[0], MAX_TURN);
+				command.speed = scale_channel(channels.ch[1], MAX_SPEED);
 
 				xQueueOverwrite(rcQueue, &command);
 			}
@@ -67,7 +73,7 @@ void vCommunicationTask(void *pvParameters){
 		}
 
 		HAL_UART_AbortReceive(&huart1);
-		HAL_UARTEx_ReceiveToIdle_DMA(&huart1, buffer, 64);
+		start_rx();
 	}
 
 }
