@@ -60,8 +60,7 @@ bool decode_rc_frame(const uint8_t *frame, uint8_t len, RC_Channels_t *Channels)
 		int starting_byte = bit_offset / 8;
 		int starting_bit = bit_offset % 8;
 
-		uint32_t chunk = ((uint32_t)payload[starting_byte + 3] << 24) |
-                ((uint32_t)payload[starting_byte + 2] << 16) |
+		uint32_t chunk = ((uint32_t)payload[starting_byte + 2] << 16) |
                 ((uint32_t)payload[starting_byte + 1] << 8)  |
                 (uint32_t)payload[starting_byte];
 
