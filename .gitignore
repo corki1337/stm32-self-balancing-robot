@@ -3,6 +3,9 @@ Debug/
 Release/
 build/
 
+# Log output
+logs/
+
 # STM32CubeIDE settings (keep .cproject, .project, .mxproject for reproducibility)
 .settings/
 
