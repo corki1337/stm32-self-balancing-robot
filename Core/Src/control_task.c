@@ -10,9 +10,10 @@
 #include <math.h>
 #include "imu_data.h"
 #include "encoder.h"
+#include "Log_Frame.h"
 
 extern QueueHandle_t rcQueue;
-
+extern QueueHandle_t logQueue;
 
 void vControlTask(void *pvParameters){
 
@@ -45,6 +46,8 @@ void vControlTask(void *pvParameters){
 	float angle_setpoint = angle_setpoint_base;
 	float wheel_speed_filt = 0.f;
 	uint8_t speed_loop_cnt = 0;
+
+	uint8_t log_cnt = 0;
 
 	float speed_setpoint = 0.f;
 	float turn = 0.f;
@@ -122,7 +125,19 @@ void vControlTask(void *pvParameters){
 
 
 
+		if(++log_cnt >= 10){
 
+			Log_Frame_t frame = {
+					.tick = xTaskGetTickCount(),
+					.complementary_angle = current_angle,
+					.kalman_angle = 0.f,
+					.angle_sp = angle_setpoint,
+					.pid_output = pid_output,
+					.wheel_speed = wheel_speed_filt
+			};
+			xQueueSend(logQueue, &frame, 0);
+			log_cnt = 0;
+		}
 
 
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
