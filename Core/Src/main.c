@@ -32,6 +32,8 @@
 #include "control_task.h"
 #include "communication_task.h"
 #include "RC_Command.h"
+#include "Log_Frame.h"
+#include "logging_task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -53,6 +55,7 @@
 
 /* USER CODE BEGIN PV */
 QueueHandle_t rcQueue;
+QueueHandle_t logQueue;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -83,6 +86,14 @@ osThreadId_t CommunicationTaskHandle;
 
 const osThreadAttr_t CommunicationTask_attributes = {
 		.name = "vCommunicationTask",
+		.stack_size = 2048,
+		.priority = (osPriority_t) osPriorityLow
+};
+
+osThreadId_t LoggingTaskHandle;
+
+const osThreadAttr_t LoggingTask_attributes = {
+		.name = "vLoggingTask",
 		.stack_size = 2048,
 		.priority = (osPriority_t) osPriorityLow
 };
@@ -133,7 +144,11 @@ int main(void)
 
   CommunicationTaskHandle = osThreadNew(vCommunicationTask, NULL, &CommunicationTask_attributes);
 
+  LoggingTaskHandle = osThreadNew(vLoggingTask, NULL, &LoggingTask_attributes);
+
   rcQueue = xQueueCreate(1, sizeof(RC_Command_t));
+
+  logQueue = xQueueCreate(5, sizeof(Log_Frame_t));
 
   /* USER CODE END 2 */
 
